@@ -8,14 +8,14 @@ tr_images_lfpw = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\data\lfpw_
 test_images_lfpw = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\data\lfpw_testset.pkl")
 init_shape_lfpw = mio.import_pickle(r"C:\Csy\incremental-alignment\data\init_shape_lfpw.pkl")
 
-from menpo.feature import no_op, sparse_hog, igo
+from menpo.feature import no_op, sparse_hog, igo, lbp
 # define my hog
 def mySparseHog(img):
     return sparse_hog(img, cell_size=5, block_size=2)
 
 from menpofit.clm import CLMBuilder
 
-clm_builder = CLMBuilder(n_levels=2,features=mySparseHog,patch_shape=(5,5))
+clm_builder = CLMBuilder(n_levels=2,features=igo,patch_shape=(5,5))
 clm = clm_builder.build(tr_images_lfpw, verbose=True)
 
 from menpofit.clm import GradientDescentCLMFitter
@@ -42,5 +42,5 @@ def fitting(fitters,test_images,init_shapes,verbose=True):
                     progress_bar_str((i + 1.)/len(test_images), show_bar=True)))
     return errs
 
-fitter1 = GradientDescentCLMFitter(clm,n_shape=[0.75,0.9])
+fitter1 = GradientDescentCLMFitter(clm,n_shape=[0.75])
 err = fitting([fitter1],test_images_lfpw,init_shape_lfpw,verbose=True)

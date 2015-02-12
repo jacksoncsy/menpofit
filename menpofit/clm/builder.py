@@ -246,6 +246,8 @@ class CLMBuilder(DeformableModelBuilder):
 
                     max_x = i.shape[0] - 1
                     max_y = i.shape[1] - 1
+                    # max_x = i.pixels.shape[0] - 1
+                    # max_y = i.pixels.shape[1] - 1
 
                     point = (np.round(s.points[k, :])).astype(int)
                     patch_grid = sampling_grid + point[None, None, ...]
@@ -260,6 +262,7 @@ class CLMBuilder(DeformableModelBuilder):
                     y[y < 0] = 0
 
                     positive_sample = i.pixels[:, x, y].T
+                    # positive_sample = i.pixels[x, y, :]
                     positive_samples.append(positive_sample)
                     positive_labels.append(np.ones(positive_sample.shape[0]))
 
@@ -271,6 +274,7 @@ class CLMBuilder(DeformableModelBuilder):
                     y[y < 0] = 0
 
                     negative_sample = i.pixels[:, x, y].T
+                    # negative_sample = i.pixels[x, y, :]
                     negative_samples.append(negative_sample)
                     negative_labels.append(-np.ones(negative_sample.shape[0]))
 

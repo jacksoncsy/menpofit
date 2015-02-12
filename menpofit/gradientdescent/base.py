@@ -140,14 +140,22 @@ class RLMS(GradientDescent):
         max_h = image.shape[-2] - 1
         max_w = image.shape[-1] - 1
 
+        # max_h = image.pixels.shape[0] - 1
+        # max_w = image.pixels.shape[1] - 1
+
         image_pixels = np.reshape(image.pixels, (image.n_channels, -1)).T
         response_image = np.zeros((target.n_points, image.shape[-2],
                                    image.shape[-1]))
+
+        # image_pixels = np.reshape(image.pixels, (-1, image.pixels.shape[2]))
+        # response_image = np.zeros((target.n_points, image.pixels.shape[0],
+        #                            image.pixels.shape[1]))
 
         # Compute response maps
         for j, clf in enumerate(self.classifiers):
             response_image[j, :, :] = np.reshape(clf(image_pixels),
                                                  image.shape)
+            # response_image[j, :, :] = np.reshape(clf(image_pixels), (image.pixels.shape[0],image.pixels.shape[1]))
 
         while n_iters < max_iters and error > self.eps:
 
