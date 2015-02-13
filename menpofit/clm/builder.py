@@ -9,6 +9,10 @@ from menpofit.builder import (DeformableModelBuilder, build_shape_model,
                               normalization_wrt_reference_shape)
 from .classifier import linear_svm_lr
 
+# Shiyang add
+from menpo.image.extract_patches import extract_patches
+from menpo.shape import PointCloud
+
 
 class CLMBuilder(DeformableModelBuilder):
     r"""
@@ -246,6 +250,7 @@ class CLMBuilder(DeformableModelBuilder):
 
                     max_x = i.shape[0] - 1
                     max_y = i.shape[1] - 1
+                    # Shiyang add
                     # max_x = i.pixels.shape[0] - 1
                     # max_y = i.pixels.shape[1] - 1
 
@@ -261,8 +266,19 @@ class CLMBuilder(DeformableModelBuilder):
                     x[x < 0] = 0
                     y[y < 0] = 0
 
-                    positive_sample = i.pixels[:, x, y].T
+                    # positive_sample = i.pixels[:, x, y].T
+
+                    # Shiyang add
                     # positive_sample = i.pixels[x, y, :]
+
+                    # Shiyang add
+                    tmp = np.float64(np.concatenate((x[:, None], y[:, None]), axis=1))
+                    positive_center = PointCloud(tmp)
+                    positive_list = i.extract_patches(positive_center, patch_size=(5, 5))
+                    a = positive_list[0]
+                    b = a.as_vector()[None, :]
+                    positive_sample = b
+
                     positive_samples.append(positive_sample)
                     positive_labels.append(np.ones(positive_sample.shape[0]))
 
@@ -274,7 +290,21 @@ class CLMBuilder(DeformableModelBuilder):
                     y[y < 0] = 0
 
                     negative_sample = i.pixels[:, x, y].T
+                    # Shiyang add
                     # negative_sample = i.pixels[x, y, :]
+
+                    # Shiyang add
+                    tmp = np.float64(np.concatenate((x[:, None], y[:, None]), axis=1))
+                    negative_centers = PointCloud(tmp)
+                    negative_list = i.extract_patches(negative_centers, patch_size=(5, 5))
+                    negative_sample_list = []
+                    for (idx, item) in enumerate(negative_list):
+                        b = item.as_vector()[None, :]
+                        negative_sample_list.append(b)
+
+                    tmp = np.asanyarray(negative_sample_list)
+                    negative_sample = np.reshape(tmp, (-1, tmp.shape[-1]))
+
                     negative_samples.append(negative_sample)
                     negative_labels.append(-np.ones(negative_sample.shape[0]))
 
@@ -363,3 +393,7 @@ def check_patch_shape(patch_shape):
         if not isinstance(sh, int) or sh < 2:
             raise ValueError(str_error)
     return patch_shape
+
+
+def check_feature_type():
+    pass

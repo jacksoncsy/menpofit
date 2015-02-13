@@ -15,7 +15,7 @@ def mySparseHog(img):
 
 from menpofit.clm import CLMBuilder
 
-clm_builder = CLMBuilder(n_levels=2,features=igo,patch_shape=(5,5))
+clm_builder = CLMBuilder(n_levels=2,features=lbp,patch_shape=(5,5))
 clm = clm_builder.build(tr_images_lfpw, verbose=True)
 
 from menpofit.clm import GradientDescentCLMFitter
