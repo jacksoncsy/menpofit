@@ -10,8 +10,8 @@ from menpofit.builder import (DeformableModelBuilder, build_shape_model,
 from .classifier import linear_svm_lr
 
 # Shiyang add
-from menpo.image.extract_patches import extract_patches
 from menpo.shape import PointCloud
+import menpo.io as mio
 
 
 class CLMBuilder(DeformableModelBuilder):
@@ -43,6 +43,9 @@ class CLMBuilder(DeformableModelBuilder):
 
     patch_shape : tuple of `int`
         The shape of the patches used by the classifier trainers.
+
+    patch_size : tuple of `int`
+        The size of one patch (positive/negative) to extract patch (for raw/igo feature).
 
     features : `callable` or ``[callable]``, optional
         If list of length ``n_levels``, feature extraction is performed at
@@ -113,7 +116,7 @@ class CLMBuilder(DeformableModelBuilder):
     clm : :map:`CLMBuilder`
         The CLM Builder object
     """
-    def __init__(self, classifier_trainers=linear_svm_lr, patch_shape=(5, 5),
+    def __init__(self, classifier_trainers=linear_svm_lr, patch_shape=(5, 5), patch_size=(5, 5),
                  features=sparse_hog, normalization_diagonal=None,
                  n_levels=3, downscale=1.1, scaled_shape_models=True,
                  max_shape_components=None, boundary=3):
@@ -131,6 +134,10 @@ class CLMBuilder(DeformableModelBuilder):
         classifier_trainers = check_classifier_trainers(classifier_trainers, n_levels)
         patch_shape = check_patch_shape(patch_shape)
 
+        # Shiyang add
+        self.use_scroll_window = check_feature_extraction_type(features)
+        self.patch_size = patch_size
+
         # store parameters
         self.classifier_trainers = classifier_trainers
         self.patch_shape = patch_shape
@@ -142,7 +149,7 @@ class CLMBuilder(DeformableModelBuilder):
         self.max_shape_components = max_shape_components
         self.boundary = boundary
 
-    def build(self, images, group=None, label=None, verbose=False):
+    def build(self, images, image_path=None, group=None, label=None, verbose=False):
         r"""
         Builds a Multilevel Constrained Local Model from a list of
         landmarked images.
@@ -165,16 +172,37 @@ class CLMBuilder(DeformableModelBuilder):
         clm : :map:`CLM`
             The CLM object
         """
+        # if given data file, then load the data manually
+        # Shiayng add, for memory usage concern
+        if image_path is not None:
+            if len(images) is 0:
+                images = []
+                for (i, item) in enumerate(image_path):
+                    images.extend(mio.import_pickle(item))
+            else:
+                ValueError("Should not pass both images and image_path!!")
+        else:
+            if len(images) is 0:
+                ValueError("No data provided!!")
+
+
         # compute reference_shape and normalize images size
         self.reference_shape, normalized_images = \
             normalization_wrt_reference_shape(
                 images, group, label, self.normalization_diagonal,
                 verbose=verbose)
 
+        # Shiayng add
+        if image_path is not None:
+            del images
+
         # create pyramid
         generators = create_pyramid(normalized_images, self.n_levels,
                                     self.downscale, self.features,
                                     verbose=verbose)
+        # Shiyang add
+        n_training_images = len(normalized_images)
+        del normalized_images
 
         # build the model at each pyramid level
         if verbose:
@@ -250,9 +278,6 @@ class CLMBuilder(DeformableModelBuilder):
 
                     max_x = i.shape[0] - 1
                     max_y = i.shape[1] - 1
-                    # Shiyang add
-                    # max_x = i.pixels.shape[0] - 1
-                    # max_y = i.pixels.shape[1] - 1
 
                     point = (np.round(s.points[k, :])).astype(int)
                     patch_grid = sampling_grid + point[None, None, ...]
@@ -266,18 +291,11 @@ class CLMBuilder(DeformableModelBuilder):
                     x[x < 0] = 0
                     y[y < 0] = 0
 
-                    # positive_sample = i.pixels[:, x, y].T
-
                     # Shiyang add
-                    # positive_sample = i.pixels[x, y, :]
-
-                    # Shiyang add
-                    tmp = np.float64(np.concatenate((x[:, None], y[:, None]), axis=1))
-                    positive_center = PointCloud(tmp)
-                    positive_list = i.extract_patches(positive_center, patch_size=(5, 5))
-                    a = positive_list[0]
-                    b = a.as_vector()[None, :]
-                    positive_sample = b
+                    if self.use_scroll_window:
+                        positive_sample = extract_scroll_window(i, x, y, self.patch_size)
+                    else:
+                        positive_sample = i.pixels[:, x, y].T
 
                     positive_samples.append(positive_sample)
                     positive_labels.append(np.ones(positive_sample.shape[0]))
@@ -289,21 +307,11 @@ class CLMBuilder(DeformableModelBuilder):
                     x[x < 0] = 0
                     y[y < 0] = 0
 
-                    negative_sample = i.pixels[:, x, y].T
                     # Shiyang add
-                    # negative_sample = i.pixels[x, y, :]
-
-                    # Shiyang add
-                    tmp = np.float64(np.concatenate((x[:, None], y[:, None]), axis=1))
-                    negative_centers = PointCloud(tmp)
-                    negative_list = i.extract_patches(negative_centers, patch_size=(5, 5))
-                    negative_sample_list = []
-                    for (idx, item) in enumerate(negative_list):
-                        b = item.as_vector()[None, :]
-                        negative_sample_list.append(b)
-
-                    tmp = np.asanyarray(negative_sample_list)
-                    negative_sample = np.reshape(tmp, (-1, tmp.shape[-1]))
+                    if self.use_scroll_window:
+                        negative_sample = extract_scroll_window(i, x, y, self.patch_size)
+                    else:
+                        negative_sample = i.pixels[:, x, y].T
 
                     negative_samples.append(negative_sample)
                     negative_labels.append(-np.ones(negative_sample.shape[0]))
@@ -334,12 +342,11 @@ class CLMBuilder(DeformableModelBuilder):
         # ordered from lower to higher resolution
         shape_models.reverse()
         classifiers.reverse()
-        n_training_images = len(images)
 
         from .base import CLM
         return CLM(shape_models, classifiers, n_training_images,
-                   self.patch_shape, self.features, self.reference_shape,
-                   self.downscale, self.scaled_shape_models)
+                   self.patch_shape, self.patch_size, self.features, self.reference_shape,
+                   self.downscale, self.scaled_shape_models, self.use_scroll_window)
 
 
 def get_pos_neg_grid_positions(sampling_grid, positive_grid_size=(1, 1)):
@@ -395,5 +402,42 @@ def check_patch_shape(patch_shape):
     return patch_shape
 
 
-def check_feature_type():
-    pass
+# Shiyang add
+def check_feature_extraction_type(features):
+    r"""
+    Checks the feature type. If is raw/igo, then need to apply scrolling window
+    """
+    feature_names = ['no_op', 'igo']
+    use_scroll_window = False
+
+    for (i, item) in enumerate(feature_names):
+        if item == features.func_name:
+            use_scroll_window = True
+
+    return use_scroll_window
+
+
+# Shiyang add
+def extract_scroll_window(image, x, y, patch_size):
+    r"""
+    If is raw/igo, then need to apply scrolling window
+
+    image : Image
+        image to extract feature
+
+    x, y : ndarray of `int`
+        x and y coordinates of point centers
+
+    """
+    tmp = np.float64(np.concatenate((x[:, None], y[:, None]), axis=1))
+    point_centers = PointCloud(tmp)
+    sample_list = image.extract_patches(point_centers, patch_size)
+    flatten_sample_list = []
+    for (idx, item) in enumerate(sample_list):
+        b = item.as_vector()[None, :]
+        flatten_sample_list.append(b)
+
+    flatten_sample_list = np.asanyarray(flatten_sample_list)
+    sample = np.reshape(flatten_sample_list, (-1, flatten_sample_list.shape[-1]))
+
+    return sample

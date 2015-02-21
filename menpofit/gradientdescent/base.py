@@ -7,6 +7,8 @@ multivariate_normal = None  # expensive, from scipy.stats
 from menpofit.fitter import Fitter
 from menpofit.fittingresult import SemiParametricFittingResult
 
+# Shiyang add
+from menpofit.clm.builder import extract_scroll_window
 
 # TODO: incorporate different residuals
 # TODO: generalize transform prior, and map the changes to LK methods
@@ -40,10 +42,12 @@ class GradientDescent(Fitter):
     Regularized Landmark Mean-Shifts", International Journal of Computer
     Vision (IJCV), 2010.
     """
-    def __init__(self, classifiers, patch_shape, pdm, eps=10**-10):
+    def __init__(self, classifiers, patch_shape, pdm, use_scroll_window=False, patch_size=(5, 5), eps=10**-10):
         self.classifiers = classifiers
         self.patch_shape = patch_shape
         self.transform = pdm
+        self.use_scroll_window = use_scroll_window
+        self.patch_size = patch_size
         self.eps = eps
         # pre-computations
         self._set_up()
@@ -96,10 +100,10 @@ class RLMS(GradientDescent):
     Regularized Landmark Mean-Shifts", International Journal of Computer
     Vision (IJCV), 2010.
     """
-    def __init__(self, classifiers, patch_shape, pdm, eps=10**-10, scale=10):
+    def __init__(self, classifiers, patch_shape, pdm, use_scroll_window=False, patch_size=(5, 5), eps=10**-10, scale=10):
         self.scale = scale
         super(RLMS, self).__init__(
-            classifiers, patch_shape, pdm, eps=eps)
+            classifiers, patch_shape, pdm, use_scroll_window, patch_size, eps=eps)
 
     @property
     def algorithm(self):
@@ -140,22 +144,20 @@ class RLMS(GradientDescent):
         max_h = image.shape[-2] - 1
         max_w = image.shape[-1] - 1
 
-        # max_h = image.pixels.shape[0] - 1
-        # max_w = image.pixels.shape[1] - 1
+        if self.use_scroll_window:
+            grid = np.mgrid[0:image.shape[-2], 0:image.shape[-1]]
+            x = grid[0, :, :].flatten()
+            y = grid[1, :, :].flatten()
+            image_pixels = extract_scroll_window(image, x, y, self.patch_size)
+        else:
+            image_pixels = np.reshape(image.pixels, (image.n_channels, -1)).T
 
-        image_pixels = np.reshape(image.pixels, (image.n_channels, -1)).T
         response_image = np.zeros((target.n_points, image.shape[-2],
                                    image.shape[-1]))
 
-        # image_pixels = np.reshape(image.pixels, (-1, image.pixels.shape[2]))
-        # response_image = np.zeros((target.n_points, image.pixels.shape[0],
-        #                            image.pixels.shape[1]))
-
         # Compute response maps
         for j, clf in enumerate(self.classifiers):
-            response_image[j, :, :] = np.reshape(clf(image_pixels),
-                                                 image.shape)
-            # response_image[j, :, :] = np.reshape(clf(image_pixels), (image.pixels.shape[0],image.pixels.shape[1]))
+            response_image[j, :, :] = np.reshape(clf(image_pixels), image.shape)
 
         while n_iters < max_iters and error > self.eps:
 

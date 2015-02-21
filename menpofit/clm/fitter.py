@@ -173,7 +173,7 @@ class GradientDescentCLMFitter(CLMFitter):
             else:
                 pdm_trans = pdm_transform(sm)
             self._fitters.append(algorithm(clf, self.clm.patch_shape,
-                                           pdm_trans, **kwargs))
+                                           pdm_trans, self.clm.use_scroll_window, self.clm.patch_size, **kwargs))
 
     def __str__(self):
         from menpofit.base import name_of_callable

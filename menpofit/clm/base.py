@@ -51,8 +51,8 @@ class CLM(DeformableModel):
 
     """
     def __init__(self, shape_models, classifiers, n_training_images,
-                 patch_shape, features, reference_shape, downscale,
-                 scaled_shape_models):
+                 patch_shape, patch_size, features, reference_shape, downscale,
+                 scaled_shape_models, use_scroll_window):
         DeformableModel.__init__(self, features)
         self.shape_models = shape_models
         self.classifiers = classifiers
@@ -61,6 +61,10 @@ class CLM(DeformableModel):
         self.reference_shape = reference_shape
         self.downscale = downscale
         self.scaled_shape_models = scaled_shape_models
+
+        # Shiyang add
+        self.patch_size = patch_size
+        self.use_scroll_window = use_scroll_window
 
     @property
     def n_levels(self):
