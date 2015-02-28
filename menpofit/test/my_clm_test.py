@@ -4,11 +4,11 @@ from copy import deepcopy
 from menpo.visualize import visualize_images, print_dynamic, progress_bar_str
 from menpofit.visualize import plot_ced, visualize_fitting_results
 
-from menpofit.clm.classifier import linear_svm_lr, lda_lr
+from menpofit.clm.classifier import linear_svm_lr, lda_lr, tk_lda_lr
 
-tr_images_lfpw = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\data\lfpw_trainset.pkl")
-#
+# tr_images_lfpw = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\data\lfpw_trainset.pkl")
 # tr_images_mpie = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\data\mpie_trainset.pkl")
+
 # tr_images_helen = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\data\helen_trainset.pkl")
 #
 # tr_images_MLH = deepcopy(tr_images_mpie)
@@ -24,7 +24,7 @@ init_shape_lfpw = mio.import_pickle(r"C:\Csy\incremental-alignment\data\init_sha
 from menpo.feature import no_op, sparse_hog, igo, lbp
 # define my hog
 def mySparseHog(img):
-    return sparse_hog(img, cell_size=5, block_size=4)
+    return sparse_hog(img, cell_size=5, block_size=2)
 
 
 # from menpofit.aam import AAMBuilder
@@ -39,15 +39,22 @@ def mySparseHog(img):
 from menpofit.clm import CLMBuilder
 
 # clm_builder = CLMBuilder(n_levels=1, features=no_op, patch_shape=(5, 5), patch_size=(3, 3))
-clm_builder = CLMBuilder(n_levels=1, features=mySparseHog, downscale=2, normalization_diagonal=200,
-                         patch_shape=(5, 5), classifier_trainers=lda_lr)
+# clm_builder = CLMBuilder(n_levels=2, features=mySparseHog, downscale=2, normalization_diagonal=200,
+#                          patch_shape=(5, 5), classifier_trainers=tk_lda_lr)
 
-clm = clm_builder.build(tr_images_lfpw, verbose=True)
+# clm_builder = CLMBuilder(n_levels=2, features=no_op, downscale=2, normalization_diagonal=250,
+#                          patch_shape=(5, 5), classifier_trainers=tk_lda_lr)
 
-# image_path = [r"C:\Csy\incremental-alignment\CLM\data\mpie_trainset.pkl",
-#               # r"C:\Csy\incremental-alignment\CLM\data\lfpw_trainset.pkl",
-#               # r"C:\Csy\incremental-alignment\CLM\data\helen_trainset.pkl"]
-# clm = clm_builder.build([], image_path, verbose=True)
+clm_builder = CLMBuilder(n_levels=2, features=mySparseHog, normalization_diagonal=250,
+                         patch_shape=(5, 5), classifier_trainers=tk_lda_lr)
+
+#
+# clm = clm_builder.build(tr_images_lfpw, verbose=True)
+
+image_path = [r"C:\Csy\incremental-alignment\CLM\data\mpie_trainset.pkl",
+              r"C:\Csy\incremental-alignment\CLM\data\lfpw_trainset.pkl"]
+              # r"C:\Csy\incremental-alignment\CLM\data\helen_trainset.pkl"]
+clm = clm_builder.build([], image_path, verbose=True)
 
 
 from menpofit.clm import GradientDescentCLMFitter
