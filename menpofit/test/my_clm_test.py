@@ -45,16 +45,23 @@ from menpofit.clm import CLMBuilder
 # clm_builder = CLMBuilder(n_levels=2, features=no_op, downscale=2, normalization_diagonal=250,
 #                          patch_shape=(5, 5), classifier_trainers=tk_lda_lr)
 
-clm_builder = CLMBuilder(n_levels=2, features=mySparseHog, normalization_diagonal=250,
+clm_builder = CLMBuilder(n_levels=1, features=mySparseHog, normalization_diagonal=100,
                          patch_shape=(5, 5), classifier_trainers=tk_lda_lr)
 
 #
 # clm = clm_builder.build(tr_images_lfpw, verbose=True)
 
-image_path = [r"C:\Csy\incremental-alignment\CLM\data\mpie_trainset.pkl",
-              r"C:\Csy\incremental-alignment\CLM\data\lfpw_trainset.pkl"]
+# image_path = [r"C:\Csy\incremental-alignment\CLM\data\mpie_trainset.pkl"]
+image_path = [r"C:\Csy\incremental-alignment\CLM\data\lfpw_trainset.pkl"]
               # r"C:\Csy\incremental-alignment\CLM\data\helen_trainset.pkl"]
 clm = clm_builder.build([], image_path, verbose=True)
+# mio.export_pickle(clm, r"C:\Csy\incremental-alignment\CLM\tmp\clm.pkl")
+
+# clm = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\tmp\clm.pkl")
+
+image_path = [r"C:\Csy\incremental-alignment\CLM\data\helen_trainset.pkl"]
+# increment leadrning
+clm.update_patch_expert([], image_path, verbose=True)
 
 
 from menpofit.clm import GradientDescentCLMFitter

@@ -329,6 +329,8 @@ class CLMBuilder(DeformableModelBuilder):
                 X = np.vstack((positive_samples, negative_samples))
                 t = np.hstack((positive_labels, negative_labels))
 
+                mio.export_pickle([X, t], r"C:\Csy\incremental-alignment\CLM\tmp\num_" +
+                                  repr(len(feature_images)) + r"\pn_" + repr(j) + '_' + repr(k) + ".pkl", overwrite=True)
                 clf = self.classifier_trainers[rj](X, t)
                 level_classifiers.append(clf)
 

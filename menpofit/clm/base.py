@@ -3,6 +3,12 @@ from menpo.image import Image
 
 from menpofit.base import DeformableModel
 
+# Shiyang add
+import menpo.io as mio
+from menpo.visualize import print_dynamic, progress_bar_str
+from menpofit.base import create_pyramid, build_sampling_grid
+from .builder import get_pos_neg_grid_positions, extract_scroll_window
+
 
 class CLM(DeformableModel):
     r"""
@@ -322,3 +328,169 @@ class CLM(DeformableModel):
                 self.n_classifiers_per_level[0],
                 name_of_callable(self.classifiers[0][0]))
         return out
+
+    def update_patch_expert(self, images, image_path=None,
+                            group=None, label=None, verbose=False):
+        """
+        extract the new training samples, and update the patch experts
+        """
+        # if given data file, then load the data manually
+        # Shiyang add, for memory usage concern
+        if image_path is not None:
+            if len(images) is 0:
+                images = []
+                for (i, item) in enumerate(image_path):
+                    images.extend(mio.import_pickle(item))
+            else:
+                ValueError("Should not pass both images and image_path!!")
+        else:
+            if len(images) is 0:
+                ValueError("No data provided!!")
+
+        print_dynamic('Start to update the patch experts.\n')
+
+        # normalize the scaling of all images wrt the reference_shape size
+        normalized_images = []
+        for c, i in enumerate(images):
+            if verbose:
+                print_dynamic('- Normalizing images size: {}'.format(
+                    progress_bar_str((c + 1.) / len(images), show_bar=False)))
+            normalized_images.append(i.rescale_to_reference_shape(
+                self.reference_shape, group=group, label=label))
+
+        if verbose:
+            print_dynamic('- Normalizing images size: Done\n')
+
+        # Shiyang add
+        if image_path is not None:
+            del images
+
+        # create pyramid
+        generators = create_pyramid(normalized_images, self.n_levels, self.downscale,
+                                    self.features, verbose=verbose)
+        # Shiyang add
+        self.n_training_images += len(normalized_images)
+        del normalized_images
+
+        # build the model at each pyramid level
+        if verbose:
+            if self.n_levels > 1:
+                print_dynamic('- Updating model for each of the {} pyramid '
+                              'levels\n'.format(self.n_levels))
+            else:
+                print_dynamic('- Updating model\n')
+
+        # # start to update the patch experts
+        # for each pyramid level (high --> low)
+        for j in range(self.n_levels):
+            # since models are built from highest to lowest level, the
+            # parameters of type list need to use a reversed index
+            rj = self.n_levels - j - 1
+
+            if verbose:
+                level_str = '  - '
+                if self.n_levels > 1:
+                    level_str = '  - Level {}: '.format(j + 1)
+
+            # get images of current level
+            feature_images = []
+            for c, g in enumerate(generators):
+                if verbose:
+                    print_dynamic(
+                        '{}Computing feature space/rescaling - {}'.format(
+                            level_str, progress_bar_str((c + 1.) / len(generators), show_bar=False)))
+                feature_images.append(next(g))
+
+            # extract potentially rescaled shapes
+            shapes = [i.landmarks[group][label] for i in feature_images]
+
+            # build classifiers
+            sampling_grid = build_sampling_grid(self.patch_shape)
+
+            # Shiyang add
+            if self.n_classifiers_per_level[rj] != shapes[0].n_points:
+                ValueError("New data doesn't have same # of points!")
+            else:
+                n_points = self.n_classifiers_per_level[rj]
+
+            for k in range(n_points):
+                if verbose:
+                    print_dynamic('{}Updating classifiers - {}'.format(
+                        level_str, progress_bar_str((k + 1.) / n_points, show_bar=False)))
+
+                positive_labels = []
+                negative_labels = []
+                positive_samples = []
+                negative_samples = []
+
+                for i, s in zip(feature_images, shapes):
+
+                    max_x = i.shape[0] - 1
+                    max_y = i.shape[1] - 1
+
+                    point = (np.round(s.points[k, :])).astype(int)
+                    patch_grid = sampling_grid + point[None, None, ...]
+                    positive, negative = get_pos_neg_grid_positions(
+                        patch_grid, positive_grid_size=(1, 1))
+
+                    x = positive[:, 0]
+                    y = positive[:, 1]
+                    x[x > max_x] = max_x
+                    y[y > max_y] = max_y
+                    x[x < 0] = 0
+                    y[y < 0] = 0
+
+                    # Shiyang add
+                    if self.use_scroll_window:
+                        positive_sample = extract_scroll_window(i, x, y, self.patch_size)
+                    else:
+                        positive_sample = i.pixels[:, x, y].T
+
+                    positive_samples.append(positive_sample)
+                    positive_labels.append(np.ones(positive_sample.shape[0]))
+
+                    x = negative[:, 0]
+                    y = negative[:, 1]
+                    x[x > max_x] = max_x
+                    y[y > max_y] = max_y
+                    x[x < 0] = 0
+                    y[y < 0] = 0
+
+                    # Shiyang add
+                    if self.use_scroll_window:
+                        negative_sample = extract_scroll_window(i, x, y, self.patch_size)
+                    else:
+                        negative_sample = i.pixels[:, x, y].T
+
+                    negative_samples.append(negative_sample)
+                    negative_labels.append(-np.ones(negative_sample.shape[0]))
+
+                positive_samples = np.asanyarray(positive_samples)
+                positive_samples = np.reshape(positive_samples,
+                                              (-1, positive_samples.shape[-1]))
+                positive_labels = np.asanyarray(positive_labels).flatten()
+
+                negative_samples = np.asanyarray(negative_samples)
+                negative_samples = np.reshape(negative_samples,
+                                              (-1, negative_samples.shape[-1]))
+                negative_labels = np.asanyarray(negative_labels).flatten()
+
+                X = np.vstack((positive_samples, negative_samples))
+                t = np.hstack((positive_labels, negative_labels))
+
+                # update classifier
+                # self.classifiers[rj][k].update(X, t)
+
+                tmp = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\tmp\num_" +
+                                        repr(self.n_training_images-len(feature_images)) +
+                                        r"\pn_" + repr(j) + '_' + repr(k) + ".pkl")
+                self.classifiers[rj][k].update(X, t, tmp[0], tmp[1])
+
+                if self.n_training_images < 6000:
+                    mio.export_pickle([np.vstack((X, tmp[0])), np.vstack((t[:, None], tmp[1][:, None]))[:, 0]],
+                                      r"C:\Csy\incremental-alignment\CLM\tmp\num_" + repr(self.n_training_images) +
+                                      r"\pn_" + repr(j) + '_' + repr(k) + ".pkl", overwrite=True)
+
+            if verbose:
+                print_dynamic('{}Done\n'.format(level_str))
+

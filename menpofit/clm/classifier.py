@@ -61,6 +61,11 @@ class tk_lda_lr(object):
         t1_pred = self.clf1.decision_function(x)
         return self.clf2.predict_proba(t1_pred[..., None])[:, 1]
 
+    def update(self, X, t, prev_X, prev_t):
+        self.clf1.increment(X, t)
+        # t1 = self.clf1.decision_function(X)
+        t1 = self.clf1.decision_function(np.vstack((X, prev_X)))
+        self.clf2.fit(t1[..., None], np.vstack((t[:, None], prev_t[:, None]))[:, 0])
 
 class tk_LDA():
     """
@@ -71,13 +76,22 @@ class tk_LDA():
     def __init__(self):
         self.eigen_threshold = 1e-4
         self.d_eigen_threshold = 1e-4
+        self.qr_threshold = 1e-4
+        self.residue_threshold = 1e-4
+        self.nonzero_threshold = 1e-4
 
     def fit(self, X, y):
         """
-        :param X:
-        :param y:
+        Fit LDA model, refer to TK Kim's CVPR07 code
+        X : array-like, shape = [n_samples, n_features]
+            Training vector, where n_samples in the number of samples and
+            n_features is the number of features.
+
+        y : array, shape = [n_samples]
+            Target values (integers)
         :return:
         """
+        # get eigenvectors and eigenvalues of the total and between-class matrix
         self.mean_, self.N_, self.t_eigvect_, self.t_eigval_ = self.get_st_model(X.T)
         _, _, self.b_eigvect_, self.b_eigval_, _, self.b_mean_pc_ = self.get_sb_model(X.T, y)
         # retrieve mean per class
@@ -85,14 +99,213 @@ class tk_LDA():
 
         self.components_, self.eigval_ = self.get_components(self.t_eigvect_, self.t_eigval_, self.b_eigvect_, self.b_eigval_, self.N_)
 
-        self.get_classifier()
+        self.calc_classifier_param()
 
         # predict labels
         # prediction = self.predict_label(self.components_, X.T, self.mean_pc_, self.classes_)
 
         return self
 
-    def get_classifier(self):
+    def increment(self, X, y):
+        """
+        X : array-like, shape = [n_samples, n_features]
+            Training vector, where n_samples in the number of samples and
+            n_features is the number of features.
+
+        y : array, shape = [n_samples]
+            Target values (integers)
+        :return:
+        """
+        # get eigenvectors and eigenvalues of the total and between-class matrix
+        mean_2, N_2, t_eigvect_2, t_eigval_2 = self.get_st_model(X.T)
+        _, _, b_eigvect_2, b_eigval_2, _, b_mean_pc_2 = self.get_sb_model(X.T, y)
+
+        # retrieve mean per class
+        mean_pc_2, Ns_2, classes_2 = self.get_mean(X.T, y)
+
+        mean_new, N_new, t_eigvect_new, t_eigval_new = self.merge_st(
+            self.mean_, self.N_, self.t_eigvect_, self.t_eigval_,
+            mean_2, N_2, t_eigvect_2, t_eigval_2)
+
+        _, _, b_eigvect_new, b_eigval_new, _, b_mean_pc_new = self.merge_sb(
+            self.mean_, self.N_, self.b_eigvect_, self.b_eigval_, self.Ns_, self.b_mean_pc_, self.classes_,
+            mean_2, N_2, b_eigvect_2, b_eigval_2, Ns_2, b_mean_pc_2, y)
+
+        self.components_, _ = self.get_components(t_eigvect_new, t_eigval_new, b_eigvect_new, b_eigval_new, N_new)
+
+        # update variables
+        self.mean_ = mean_new
+        self.N_ = N_new
+        self.t_eigvect_ = t_eigvect_new
+        self.t_eigval_ = t_eigval_new
+        self.b_eigvect_ = b_eigvect_new
+        self.b_eigval_ = b_eigval_new
+        self.b_mean_pc_ = b_mean_pc_new
+        self.mean_pc_ = (self.Ns_*self.mean_pc_ + Ns_2*mean_pc_2) / (self.Ns_+Ns_2)
+        self.Ns_ += Ns_2
+        if (self.classes_ != classes_2).any:
+            ValueError("Class labels mismatched!")
+
+        # update the classifier coeff as well
+        self.calc_classifier_param()
+
+    def merge_st(self, mean_1, N_1, t_eigvect_1, t_eigval_1, mean_2, N_2, t_eigvect_2, t_eigval_2):
+        """
+        Merge total scatter matrix
+        :return:
+        """
+        # update global mean
+        N_new = N_1 + N_2
+        mean_new = (N_1*mean_1 + N_2*mean_2) / N_new
+
+        G = t_eigvect_1.T.dot(t_eigvect_2)
+        mean_diff = mean_1 - mean_2
+
+        residue = t_eigvect_2 - t_eigvect_1.dot(G)
+        residue_sum_row = np.sum(np.abs(residue), axis=0)
+        sel_idx = residue_sum_row > self.residue_threshold
+        pure_residue = residue[:, sel_idx]
+
+        mean_residue = mean_diff - t_eigvect_1.dot(t_eigvect_1.T.dot(mean_diff))
+        if len(mean_residue.shape) == 1:
+            mean_residue = mean_residue[:, None]
+        mean_residue_sum_row = np.sum(np.abs(mean_residue), axis=0)
+        sel_idx = mean_residue_sum_row > self.residue_threshold
+        mean_residue = mean_residue[:, sel_idx]
+
+        orth_submatrix, upper_tri = np.linalg.qr(np.hstack((pure_residue, mean_residue)))
+        # remove non-significant components
+        upper_trisum = np.sum(np.abs(upper_tri), axis=1)
+        sel_idx = upper_trisum > self.qr_threshold
+        orth_submatrix = orth_submatrix[:, sel_idx]
+
+        T = orth_submatrix.T.dot(t_eigvect_2)
+        mG = t_eigvect_1.T.dot(mean_diff[:, None])
+        mT = orth_submatrix.T.dot(mean_diff[:, None])
+
+        reduce_dim = t_eigvect_1.shape[1] + orth_submatrix.shape[1]
+
+        term1 = np.zeros((reduce_dim, reduce_dim))
+        term1[:t_eigvect_1.shape[1], :t_eigvect_1.shape[1]] = t_eigval_1
+
+        term2 = np.vstack( (np.hstack((G.dot(t_eigval_2).dot(G.T), G.dot(t_eigval_2).dot(T.T))),
+                            np.hstack((T.dot(t_eigval_2).dot(G.T), T.dot(t_eigval_2).dot(T.T))) ) )
+
+        term3 = np.vstack( (np.hstack((mG.dot(mG.T), mG.dot(mT.T))),
+                            np.hstack((mT.dot(mG.T), mT.dot(mT.T))) ) ) * (N_1*N_2) / N_new
+
+        composite = term1 + term2 + term3
+
+        U, sigma, _ = np.linalg.svd(composite)
+
+        sel_idx = sigma > self.eigen_threshold
+        U = U[:, sel_idx]
+        t_eigval_new = np.diag(sigma[sel_idx])
+        t_eigvect_new = np.hstack((t_eigvect_1, orth_submatrix)).dot(U)
+
+        return mean_new, N_new, t_eigvect_new, t_eigval_new
+
+    def merge_sb(self, mean_1, N_1, b_eigvect_1, b_eigval_1, Ns_1, b_mean_pc_1, classes_1,
+                 mean_2, N_2, b_eigvect_2, b_eigval_2, Ns_2, b_mean_pc_2, y_2):
+        """
+        Merge between-class scatter matrix
+        :return:
+        """
+        # update global mean
+        N_new = N_1 + N_2
+        mean_new = (N_1*mean_1 + N_2*mean_2) / N_new
+        dim = b_eigvect_1.shape[0]
+
+        G = b_eigvect_1.T.dot(b_eigvect_2)
+        mean_diff = mean_1 - mean_2
+        residue = b_eigvect_2 - b_eigvect_1.dot(G)
+        residue_sum_row = np.sum(np.abs(residue), axis=0)
+        sel_idx = residue_sum_row > self.residue_threshold
+        pure_residue = residue[:, sel_idx]
+
+        mean_residue = mean_diff - b_eigvect_1.dot(b_eigvect_1.T.dot(mean_diff))
+        if len(mean_residue.shape) == 1:
+            mean_residue = mean_residue[:, None]
+        mean_residue_sum_row = np.sum(np.abs(mean_residue), axis=0)
+        sel_idx = mean_residue_sum_row > self.residue_threshold
+        mean_residue = mean_residue[:, sel_idx]
+
+        orth_submatrix, upper_tri = np.linalg.qr(np.hstack((pure_residue, mean_residue)))
+        # remove non-significant components
+        upper_trisum = np.sum(np.abs(upper_tri), axis=1)
+        sel_idx = upper_trisum > self.qr_threshold
+        orth_submatrix = orth_submatrix[:, sel_idx]
+        # remove zero entry as well
+        orth_sum = np.sum(np.abs(orth_submatrix), axis=0)
+        nonzero_index = orth_sum > self.nonzero_threshold
+        orth_submatrix = orth_submatrix[:, nonzero_index]
+
+        # SVD
+        T = orth_submatrix.T.dot(b_eigvect_2)
+        mG = b_eigvect_1.T.dot(mean_diff[:, None])
+        mT = orth_submatrix.T.dot(mean_diff[:, None])
+
+        reduce_dim = b_eigvect_1.shape[1] + orth_submatrix.shape[1]
+
+        term1 = np.zeros((reduce_dim, reduce_dim))
+        term1[:b_eigvect_1.shape[1], :b_eigvect_1.shape[1]] = b_eigval_1
+
+        term2 = np.vstack( (np.hstack((G.dot(b_eigval_2).dot(G.T), G.dot(b_eigval_2).dot(T.T))),
+                            np.hstack((T.dot(b_eigval_2).dot(G.T), T.dot(b_eigval_2).dot(T.T))) ) )
+
+        term4 = np.vstack( (np.hstack((mG.dot(mG.T), mG.dot(mT.T))),
+                            np.hstack((mT.dot(mG.T), mT.dot(mT.T))) ) ) * (N_1*N_2) / N_new
+
+        # for common classes
+        term3 = np.zeros((reduce_dim, reduce_dim))
+        labelset_2 = np.unique(y_2)
+        labelset_com = np.intersect1d(classes_1, labelset_2)
+        for i in range(labelset_com.size):
+            idx1 = labelset_com[i] == classes_1
+            idx2 = labelset_com[i] == labelset_2
+
+            coeff = (-Ns_1[idx1]*Ns_2[idx2]) / (Ns_1[idx1]+Ns_2[idx2])
+            classmean_diff = b_eigvect_1.dot(b_mean_pc_1[:, idx1]) + mean_1[:, None] - \
+                             b_eigvect_2.dot(b_mean_pc_2[:, idx2]) - mean_2[:, None]
+
+            cG = b_eigvect_1.T.dot(classmean_diff)
+            cT = orth_submatrix.T.dot(classmean_diff)
+            term3 += np.vstack( (np.hstack((cG.dot(cG.T), cG.dot(cT.T))),
+                                 np.hstack((cT.dot(cG.T), cT.dot(cT.T))) ) ) * coeff
+
+        composite = term1 + term2 + term3 + term4
+        U, sigma, _ = np.linalg.svd(composite)
+
+        sel_idx = sigma > self.eigen_threshold
+        U = U[:, sel_idx]
+        b_eigval_new = np.diag(sigma[sel_idx])
+        b_eigvect_new = np.hstack((b_eigvect_1, orth_submatrix)).dot(U)
+
+        # update other params
+        labelset = np.unique(np.hstack((classes_1, y_2)))
+        class_num = labelset.size
+        Ns_new = np.zeros(class_num)
+        b_mean_pc_new = np.zeros((b_eigvect_new.shape[1], class_num))
+
+        for i in range(labelset_com.size):
+            idx1 = labelset[i] == classes_1
+            idx2 = labelset[i] == labelset_2
+            submean_3 = np.zeros((dim, 1))
+
+            if idx1.size > 0:
+                Ns_new[i] += Ns_1[idx1]
+                submean_3 += Ns_1[idx1]*(b_eigvect_1.dot(b_mean_pc_1[:, idx1]) + mean_1[:, None])
+
+            if idx2.size > 0:
+                Ns_new[i] += Ns_2[idx2]
+                submean_3 += Ns_2[idx2]*(b_eigvect_2.dot(b_mean_pc_2[:, idx2]) + mean_2[:, None])
+
+            submean_3 /= Ns_new[i]
+            b_mean_pc_new[:, i] = b_eigvect_new.T.dot(submean_3 - mean_new[:, None])
+
+        return mean_new, N_new, b_eigvect_new, b_eigval_new, Ns_new, b_mean_pc_new
+
+    def calc_classifier_param(self):
         # set the params for decision function
         self.prior_ = self.Ns_/self.N_
         self.coef_  = self.components_.T.dot(self.mean_pc_ - self.mean_[:, None])
@@ -218,10 +431,9 @@ class tk_LDA():
         spanset_tau, upper_tri = np.linalg.qr(total_term_Z.T.dot(between_eigvect))
 
         # remove non-significant components
-        qr_threshold = 1e-4
         upper_trisum = np.sum(np.abs(upper_tri), axis=1)
 
-        sel_idx = upper_trisum > qr_threshold
+        sel_idx = upper_trisum > self.qr_threshold
         spanset_tau = spanset_tau[:, sel_idx]
 
         half = spanset_tau.T.dot(total_term_Z.T.dot(between_eigvect))
@@ -281,8 +493,15 @@ class tk_LDA():
         else:
             covariance_mat = data.dot(data.T)/(N-1)
             u, s, _ = np.linalg.svd(covariance_mat)
-            # component selection
-            sel_idx = s > self.eigen_threshold
+            # # component selection
+            # sel_idx = s > self.eigen_threshold
+            # u = u[:, sel_idx]
+            # s = s[sel_idx]
+
+            # select components based on percentage
+            percentage = 0.98
+            percents = np.cumsum(s)/np.sum(s)
+            sel_idx = percents<=percentage
             u = u[:, sel_idx]
             s = s[sel_idx]
 
