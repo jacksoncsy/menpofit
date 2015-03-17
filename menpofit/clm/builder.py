@@ -149,7 +149,7 @@ class CLMBuilder(DeformableModelBuilder):
         self.max_shape_components = max_shape_components
         self.boundary = boundary
 
-    def build(self, images, image_path=None, group=None, label=None, verbose=False):
+    def build(self, images, image_path=None, group=None, label=None, verbose=False, exp_mode=False):
         r"""
         Builds a Multilevel Constrained Local Model from a list of
         landmarked images.
@@ -180,11 +180,10 @@ class CLMBuilder(DeformableModelBuilder):
                 for (i, item) in enumerate(image_path):
                     images.extend(mio.import_pickle(item))
             else:
-                ValueError("Should not pass both images and image_path!!")
+                raise ValueError("Should not pass both images and image_path!!")
         else:
             if len(images) is 0:
-                ValueError("No data provided!!")
-
+                raise ValueError("No data provided!!")
 
         # compute reference_shape and normalize images size
         self.reference_shape, normalized_images = \
@@ -192,7 +191,7 @@ class CLMBuilder(DeformableModelBuilder):
                 images, group, label, self.normalization_diagonal,
                 verbose=verbose)
 
-        # Shiayng add
+        # Shiyang add
         if image_path is not None:
             del images
 
@@ -200,6 +199,7 @@ class CLMBuilder(DeformableModelBuilder):
         generators = create_pyramid(normalized_images, self.n_levels,
                                     self.downscale, self.features,
                                     verbose=verbose)
+
         # Shiyang add
         n_training_images = len(normalized_images)
         del normalized_images
@@ -329,8 +329,12 @@ class CLMBuilder(DeformableModelBuilder):
                 X = np.vstack((positive_samples, negative_samples))
                 t = np.hstack((positive_labels, negative_labels))
 
-                mio.export_pickle([X, t], r"C:\Csy\incremental-alignment\CLM\tmp\num_" +
-                                  repr(len(feature_images)) + r"\pn_" + repr(j) + '_' + repr(k) + ".pkl", overwrite=True)
+                # mio.export_pickle([X, t], dst + r"/" + repr(j) + '_' + repr(k) + ".pkl", overwrite=True)
+                # mio.export_pickle([X, t], r"C:\Csy\incremental-alignment\CLM\tmp\num_" +
+                #                   repr(len(feature_images)) + r"\pn_" + repr(j) + '_' + repr(k) + ".pkl", overwrite=True)
+
+                # if self.classifier_trainers[0].__name__ == 'sofia_svm_lr':
+
                 clf = self.classifier_trainers[rj](X, t)
                 level_classifiers.append(clf)
 
@@ -443,3 +447,7 @@ def extract_scroll_window(image, x, y, patch_size):
     sample = np.reshape(flatten_sample_list, (-1, flatten_sample_list.shape[-1]))
 
     return sample
+
+
+
+

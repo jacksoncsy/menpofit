@@ -342,10 +342,10 @@ class CLM(DeformableModel):
                 for (i, item) in enumerate(image_path):
                     images.extend(mio.import_pickle(item))
             else:
-                ValueError("Should not pass both images and image_path!!")
+                raise ValueError("Should not pass both images and image_path!!")
         else:
             if len(images) is 0:
-                ValueError("No data provided!!")
+                raise ValueError("No data provided!!")
 
         print_dynamic('Start to update the patch experts.\n')
 
@@ -365,7 +365,6 @@ class CLM(DeformableModel):
         if image_path is not None:
             del images
 
-        # create pyramid
         generators = create_pyramid(normalized_images, self.n_levels, self.downscale,
                                     self.features, verbose=verbose)
         # Shiyang add
@@ -409,7 +408,7 @@ class CLM(DeformableModel):
 
             # Shiyang add
             if self.n_classifiers_per_level[rj] != shapes[0].n_points:
-                ValueError("New data doesn't have same # of points!")
+                raise ValueError("New data doesn't have same # of points!")
             else:
                 n_points = self.n_classifiers_per_level[rj]
 
