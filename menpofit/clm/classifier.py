@@ -30,7 +30,7 @@ class linear_svm_lr(object):
         t1_pred = self.clf1.decision_function(x)
         return self.clf2.predict_proba(t1_pred[..., None])[:, 1]
 
-class sofia_svm_lr(object):
+class sofia_svm_pure(object):
     r"""
     Binary classifier that combines SVM (sofia-ml) and
     Logistic Regression.
@@ -39,94 +39,37 @@ class sofia_svm_lr(object):
         # if not contiguous in C, make it contiguous
         if not X.flags['C_CONTIGUOUS']:
             X = np.ascontiguousarray(X, dtype=X.dtype)
+        # if not contiguous in C, make it contiguous
+        if not t.flags['C_CONTIGUOUS']:
+            t = np.ascontiguousarray(t, dtype=t.dtype)
 
-        self.coef = sofia_ml.svm_train(X, t, None, 0.001, X.shape[0], X.shape[1],
-                                  sofia_ml.learner_type.logreg_pegasos,
-                                  sofia_ml.loop_type.balanced_stochastic,
-                                  sofia_ml.eta_type.pegasos_eta,
-                                  max_iter=100000)
+        # baseline: 0.00001, pegasos, balanced_stochastic, pegasos_eta, 10000
+        self.lambda_ = 0.00001
+        self.learner_ = sofia_ml.learner_type.pegasos
+        self.loop_ = sofia_ml.loop_type.balanced_stochastic
+        self.eta_ = sofia_ml.eta_type.pegasos_eta
+        self.max_iter_ = 10000
 
-        # # dump code uses directly C code, extremely slow
-        # path = r"/data/RA/incremental-alignment/CLM/cache"
-        # # save the features
-        #
-        # dst_path = path + "/dim_%d_%d/" % (X.shape[0], X.shape[1]) + time.ctime()[:10].replace(" ", "_")
-        # if not os.path.exists(dst_path):
-        #     os.makedirs(dst_path)
-        #
-        # # id of files
-        # filename = dst_path + r"/" + time.ctime()[11:-4].replace(" ", "_") + repr(np.random.randint(0, 1000))
-        #
-        # train_path = filename + ".train"
-        # export_sofia_ml_data(train_path, X, t, overwrite=True)
-        #
-        # model_path = filename + ".model"
-        #
-        # orig_pwd = os.getcwd()
-        # code_path = r"/data/RA/incremental-alignment/incremental/sofia-ml-read-only"
-        # os.chdir(code_path)
-        #
-        # # call the c training code
-        # p = sb.Popen(["./sofia-ml", "--learner_type", "logreg-pegasos", "--loop_type", "balanced-stochastic",
-        #               "--lambda", "0.001", "--iterations", "200000", "--dimensionality", repr(X.shape[1]),
-        #               "--training_file", train_path, "--model_out", model_path],
-        #              stdout=sb.PIPE, stderr=sb.PIPE)
-        # p.communicate()
-        # p.wait()
-        #
-        # # # # just to test the train data
-        # # result_path = model_path.replace(".model", ".txt")
-        # # # call the c testing code
-        # # p = sb.Popen(["./sofia-ml", "--test_file", train_path, "--model_in", model_path,
-        # #               "--results_file", result_path, "--prediction_type", "logistic"],
-        # #              stdout=sb.PIPE, stderr=sb.PIPE)
-        # # p.communicate()
-        # # p.wait()
-        # # prob = import_sofia_ml_results(result_path, X.shape[0])
-        #
-        # os.chdir(orig_pwd)
-        #
-        # self.model_path = model_path
-        # self.code_path = code_path
-        #
-        # # delete temp training files
-        # if os.path.exists(train_path):
-        #     os.remove(train_path)
+        self.coef_ = sofia_ml.svm_train(X, t, None, self.lambda_, X.shape[0], X.shape[1],
+                                  self.learner_, self.loop_, self.eta_, self.max_iter_)
 
     def __call__(self, x):
-        # # dump code uses directly C code, extremely slow
-        # test_path = self.model_path.replace(".model", ".test")
-        # export_sofia_ml_data(test_path, x, np.concatenate([np.ones(x.shape[0]-1), -np.ones(1)]), overwrite=True)
-        #
-        # result_path = self.model_path.replace(".model", ".txt")
-        #
-        # orig_pwd = os.getcwd()
-        # os.chdir(self.code_path)
-        #
-        # # call the c testing code
-        # p = sb.Popen(["./sofia-ml", "--test_file", test_path, "--model_in", self.model_path,
-        #               "--results_file", result_path, "--prediction_type", "logistic"],
-        #              stdout=sb.PIPE, stderr=sb.PIPE)
-        # p.communicate()
-        # p.wait()
-        #
-        # os.chdir(orig_pwd)
-        #
-        # prob = import_sofia_ml_results(result_path, x.shape[0])
-        #
-        # # delete temp testing and results files
-        # if os.path.exists(result_path):
-        #     os.remove(result_path)
-        #
-        # if os.path.exists(test_path):
-        #     os.remove(test_path)
-
         # if not contiguous in C, make it contiguous
         if not x.flags['C_CONTIGUOUS']:
             x = np.ascontiguousarray(x, dtype=x.dtype)
-        prob = sofia_ml.svm_predict(x, self.coef, sofia_ml.predict_type.logistic)
+        prob = sofia_ml.svm_predict(x, self.coef_, sofia_ml.predict_type.logistic)
 
         return prob
+
+    def update(self, X, t):
+        # if not contiguous in C, make it contiguous
+        if not X.flags['C_CONTIGUOUS']:
+            X = np.ascontiguousarray(X, dtype=X.dtype)
+        # if not contiguous in C, make it contiguous
+        if not t.flags['C_CONTIGUOUS']:
+            t = np.ascontiguousarray(t, dtype=t.dtype)
+        self.coef_ = sofia_ml.svm_update(X, t, self.coef_, self.lambda_, X.shape[0], X.shape[1],
+                                         self.learner_, self.loop_, self.eta_, self.max_iter_)
 
 class lda_lr(object):
     r"""
@@ -169,6 +112,23 @@ class tk_lda_lr(object):
         # t1 = self.clf1.decision_function(X)
         t1 = self.clf1.decision_function(np.vstack((X, prev_X)))
         self.clf2.fit(t1[..., None], np.vstack((t[:, None], prev_t[:, None]))[:, 0])
+
+class tk_lda_pure(object):
+    r"""
+    Binary classifier that combines Linear Discriminant Analysis (TK Kim's).
+    """
+    def __init__(self, X, t):
+        self.clf1 = tk_LDA()
+        self.clf1.fit(X, t)
+
+    def __call__(self, x):
+        t1_pred = self.clf1.decision_function(x)
+        prob = np.exp(t1_pred) / (1 + np.exp(t1_pred))
+        return prob
+
+    def update(self, X, t):
+        self.clf1.increment(X, t)
+
 
 class tk_LDA():
     """
@@ -246,7 +206,7 @@ class tk_LDA():
         self.b_mean_pc_ = b_mean_pc_new
         self.mean_pc_ = (self.Ns_*self.mean_pc_ + Ns_2*mean_pc_2) / (self.Ns_+Ns_2)
         self.Ns_ += Ns_2
-        if (self.classes_ != classes_2).any:
+        if (self.classes_ != classes_2).any():
             raise ValueError("Class labels mismatched!")
 
         # update the classifier coeff as well
@@ -650,3 +610,50 @@ def import_sofia_ml_results(filename, num):
         raise ValueError("Num of instances is not equal to the SVM results!")
 
     return decision_values
+
+# # dump code uses directly C code, extremely slow
+# path = r"/data/RA/incremental-alignment/CLM/cache"
+# # save the features
+#
+# dst_path = path + "/dim_%d_%d/" % (X.shape[0], X.shape[1]) + time.ctime()[:10].replace(" ", "_")
+# if not os.path.exists(dst_path):
+#     os.makedirs(dst_path)
+#
+# # id of files
+# filename = dst_path + r"/" + time.ctime()[11:-4].replace(" ", "_") + repr(np.random.randint(0, 1000))
+#
+# train_path = filename + ".train"
+# export_sofia_ml_data(train_path, X, t, overwrite=True)
+#
+# model_path = filename + ".model"
+#
+# orig_pwd = os.getcwd()
+# code_path = r"/data/RA/incremental-alignment/incremental/sofia-ml-read-only"
+# os.chdir(code_path)
+#
+# # call the c training code
+# p = sb.Popen(["./sofia-ml", "--learner_type", "logreg-pegasos", "--loop_type", "balanced-stochastic",
+#               "--lambda", "0.001", "--iterations", "200000", "--dimensionality", repr(X.shape[1]),
+#               "--training_file", train_path, "--model_out", model_path],
+#              stdout=sb.PIPE, stderr=sb.PIPE)
+# p.communicate()
+# p.wait()
+#
+# # # # just to test the train data
+# # result_path = model_path.replace(".model", ".txt")
+# # # call the c testing code
+# # p = sb.Popen(["./sofia-ml", "--test_file", train_path, "--model_in", model_path,
+# #               "--results_file", result_path, "--prediction_type", "logistic"],
+# #              stdout=sb.PIPE, stderr=sb.PIPE)
+# # p.communicate()
+# # p.wait()
+# # prob = import_sofia_ml_results(result_path, X.shape[0])
+#
+# os.chdir(orig_pwd)
+#
+# self.model_path = model_path
+# self.code_path = code_path
+#
+# # delete temp training files
+# if os.path.exists(train_path):
+#     os.remove(train_path)

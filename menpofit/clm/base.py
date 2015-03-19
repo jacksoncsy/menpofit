@@ -478,17 +478,17 @@ class CLM(DeformableModel):
                 t = np.hstack((positive_labels, negative_labels))
 
                 # update classifier
-                # self.classifiers[rj][k].update(X, t)
+                self.classifiers[rj][k].update(X, t)
 
-                tmp = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\tmp\num_" +
-                                        repr(self.n_training_images-len(feature_images)) +
-                                        r"\pn_" + repr(j) + '_' + repr(k) + ".pkl")
-                self.classifiers[rj][k].update(X, t, tmp[0], tmp[1])
+                # tmp = mio.import_pickle(r"C:\Csy\incremental-alignment\CLM\tmp\num_" +
+                #                         repr(self.n_training_images-len(feature_images)) +
+                #                         r"\pn_" + repr(j) + '_' + repr(k) + ".pkl")
+                # self.classifiers[rj][k].update(X, t, tmp[0], tmp[1])
 
-                if self.n_training_images < 6000:
-                    mio.export_pickle([np.vstack((X, tmp[0])), np.vstack((t[:, None], tmp[1][:, None]))[:, 0]],
-                                      r"C:\Csy\incremental-alignment\CLM\tmp\num_" + repr(self.n_training_images) +
-                                      r"\pn_" + repr(j) + '_' + repr(k) + ".pkl", overwrite=True)
+                # if self.n_training_images < 6000:
+                #     mio.export_pickle([np.vstack((X, tmp[0])), np.vstack((t[:, None], tmp[1][:, None]))[:, 0]],
+                #                       r"C:\Csy\incremental-alignment\CLM\tmp\num_" + repr(self.n_training_images) +
+                #                       r"\pn_" + repr(j) + '_' + repr(k) + ".pkl", overwrite=True)
 
             if verbose:
                 print_dynamic('{}Done\n'.format(level_str))
