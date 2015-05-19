@@ -358,12 +358,23 @@ class MultilevelFitter(Fitter):
             if gt_shapes is not None:
                 gt_shape = gt_shapes[j]
 
-            parameters = f.get_parameters(shape)
-            fitting_result = f.fit(i, parameters, gt_shape=gt_shape,
-                                   max_iters=it, **kwargs)
-            fitting_results.append(fitting_result)
+            # Shiyang change
+            if isinstance(f, list):
+                for _, sub_f in enumerate(f):
+                    parameters = sub_f.get_parameters(shape)
+                    fitting_result = sub_f.fit(i, parameters, gt_shape=gt_shape,
+                                               max_iters=it, **kwargs)
+                    fitting_results.append(fitting_result)
 
-            shape = fitting_result.final_shape
+                    shape = fitting_result.final_shape
+            else:
+                parameters = f.get_parameters(shape)
+                fitting_result = f.fit(i, parameters, gt_shape=gt_shape,
+                                       max_iters=it, **kwargs)
+                fitting_results.append(fitting_result)
+
+                shape = fitting_result.final_shape
+
             Scale(self.downscale, n_dims=shape.n_dims).apply_inplace(shape)
 
         return fitting_results

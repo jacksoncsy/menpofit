@@ -6,6 +6,7 @@ from sklearn import lda
 import numpy as np
 from scipy import linalg
 import scipy.io as sio
+from copy import deepcopy
 
 from pysofia import sofia_ml
 
@@ -30,6 +31,132 @@ class linear_svm_lr(object):
         t1_pred = self.clf1.decision_function(x)
         return self.clf2.predict_proba(t1_pred[..., None])[:, 1]
 
+class linear_svm_pure(object):
+    r"""
+    Binary classifier Linear Support Vector Machines.
+    """
+    def __init__(self, X, t):
+        self.clf1 = svm.LinearSVC(class_weight='auto', dual=False)
+        self.clf1.fit(X, t)
+
+    def __call__(self, x):
+        t1_pred = self.clf1.decision_function(x)
+        prob = np.exp(t1_pred) / (1 + np.exp(t1_pred))
+        return prob
+
+class linear_svm_sofiaInc(object):
+    r"""
+    Binary classifier Linear Support Vector Machines, update SVM using Pegasos algorithm
+    """
+    def __init__(self, X, t):
+        self.clf1 = svm.LinearSVC(class_weight='auto', dual=False, fit_intercept=False)
+        self.clf1.fit(X, t)
+        t1 = self.clf1.decision_function(X)
+        self.clf2 = linear_model.LogisticRegression(class_weight='auto')
+        self.clf2.fit(t1[..., None], t)
+
+        # params for sofia-ml update
+        self.update_flag = False
+
+        self.lambda_ = 0.0001
+        self.learner_ = sofia_ml.learner_type.pegasos
+        self.loop_ = sofia_ml.loop_type.balanced_stochastic
+        self.eta_ = sofia_ml.eta_type.pegasos_eta
+        self.max_iter_ = 30000
+
+    def __call__(self, x):
+        # if have been updated by sofia-ml
+        if self.update_flag:
+            # if not contiguous in C, make it contiguous
+            if not x.flags['C_CONTIGUOUS']:
+                x = np.ascontiguousarray(x, dtype=x.dtype)
+            t1_pred = sofia_ml.svm_predict(x, self.coef_, sofia_ml.predict_type.linear)
+            prob = self.clf2.predict_proba(t1_pred[..., None])[:, 1]
+        else:
+            t1_pred = self.clf1.decision_function(x)
+            prob = self.clf2.predict_proba(t1_pred[..., None])[:, 1]
+
+        return prob
+
+    def update(self, X, t):
+        if not self.update_flag:
+            self.coef_ = deepcopy(self.clf1.coef_.ravel())
+        self.update_flag = True
+
+        # if not contiguous in C, make it contiguous
+        if not X.flags['C_CONTIGUOUS']:
+            X = np.ascontiguousarray(X, dtype=X.dtype)
+        # if not contiguous in C, make it contiguous
+        if not t.flags['C_CONTIGUOUS']:
+            t = np.ascontiguousarray(t, dtype=t.dtype)
+
+        # # v1
+        # self.coef_ = sofia_ml.svm_update(X, t, self.coef_, self.lambda_, X.shape[0], X.shape[1],
+        #                                  self.learner_, self.loop_, self.eta_, self.max_iter_)
+
+        # v2
+        self.coef_ = sofia_ml.svm_update(X, t, self.coef_, self.lambda_, X.shape[0], X.shape[1],
+                                         self.learner_, self.loop_, self.eta_, self.max_iter_)
+        # update logistic regression
+        t1_pred = sofia_ml.svm_predict(X, self.coef_, sofia_ml.predict_type.linear)
+        self.clf2 = linear_model.LogisticRegression(class_weight='auto')
+        self.clf2.fit(t1_pred[..., None], t)
+
+class sofia_svm_lr(object):
+    r"""
+    Binary classifier that combines SVM (sofia-ml) and
+    Logistic Regression.
+    """
+    def __init__(self, X, t):
+        # if not contiguous in C, make it contiguous
+        if not X.flags['C_CONTIGUOUS']:
+            X = np.ascontiguousarray(X, dtype=X.dtype)
+        # if not contiguous in C, make it contiguous
+        if not t.flags['C_CONTIGUOUS']:
+            t = np.ascontiguousarray(t, dtype=t.dtype)
+
+        # baseline: 0.00001, pegasos, balanced_stochastic, pegasos_eta, 10000
+        self.lambda_ = 0.0001
+        self.learner_ = sofia_ml.learner_type.pegasos
+        self.loop_ = sofia_ml.loop_type.balanced_stochastic
+        self.eta_ = sofia_ml.eta_type.pegasos_eta
+        self.max_iter_ = 30000
+
+        self.coef_ = sofia_ml.svm_train(X, t, None, self.lambda_, X.shape[0], X.shape[1],
+                                        self.learner_, self.loop_, self.eta_, self.max_iter_)
+
+        t1 = sofia_ml.svm_predict(X, self.coef_, sofia_ml.predict_type.linear)
+        self.clf2 = linear_model.LogisticRegression(class_weight='auto')
+        self.clf2.fit(t1[..., None], t)
+
+
+    def __call__(self, x):
+        # if not contiguous in C, make it contiguous
+        if not x.flags['C_CONTIGUOUS']:
+            x = np.ascontiguousarray(x, dtype=x.dtype)
+        t1_pred = sofia_ml.svm_predict(x, self.coef_, sofia_ml.predict_type.linear)
+        prob = self.clf2.predict_proba(t1_pred[..., None])[:, 1]
+        return prob
+
+    def update(self, X, t):
+        # if not contiguous in C, make it contiguous
+        if not X.flags['C_CONTIGUOUS']:
+            X = np.ascontiguousarray(X, dtype=X.dtype)
+        # if not contiguous in C, make it contiguous
+        if not t.flags['C_CONTIGUOUS']:
+            t = np.ascontiguousarray(t, dtype=t.dtype)
+        # # v1
+        # self.coef_ = sofia_ml.svm_update(X, t, self.coef_, self.lambda_, X.shape[0], X.shape[1],
+        #                                  self.learner_, self.loop_, self.eta_, self.max_iter_)
+
+        # v2
+        self.coef_ = sofia_ml.svm_update(X, t, self.coef_, self.lambda_, X.shape[0], X.shape[1],
+                                         self.learner_, self.loop_, self.eta_, self.max_iter_)
+        # update logistic regression
+        t1_pred = sofia_ml.svm_predict(X, self.coef_, sofia_ml.predict_type.linear)
+        self.clf2 = linear_model.LogisticRegression(class_weight='auto')
+        self.clf2.fit(t1_pred[..., None], t)
+
 class sofia_svm_pure(object):
     r"""
     Binary classifier that combines SVM (sofia-ml) and
@@ -51,7 +178,7 @@ class sofia_svm_pure(object):
         self.max_iter_ = 10000
 
         self.coef_ = sofia_ml.svm_train(X, t, None, self.lambda_, X.shape[0], X.shape[1],
-                                  self.learner_, self.loop_, self.eta_, self.max_iter_)
+                                        self.learner_, self.loop_, self.eta_, self.max_iter_)
 
     def __call__(self, x):
         # if not contiguous in C, make it contiguous

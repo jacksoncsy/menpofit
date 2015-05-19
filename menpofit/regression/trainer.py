@@ -5,7 +5,7 @@ from menpo.image import Image
 from menpo.feature import sparse_hog
 from menpo.visualize import print_dynamic, progress_bar_str
 
-from menpofit.base import noisy_align, build_sampling_grid
+from menpofit.base import noisy_align, build_sampling_grid, noisy_pdm_align, noisy_shape
 from menpofit.fittingresult import (NonParametricFittingResult,
                                     SemiParametricFittingResult,
                                     ParametricFittingResult)
@@ -180,6 +180,132 @@ class RegressorTrainer(object):
             print_dynamic('- Regression RMSE is {0:.5f}.\n'.format(error))
         return self._build_regressor(regressor, self.features)
 
+    def train_csy(self, images, shapes, perturbed_shapes=None, verbose=False, **kwargs):
+        r"""
+        Trains a Regressor given a list of landmarked images.
+
+        Parameters
+        ----------
+        images : list of :map:`MaskedImage`
+            The set of landmarked images from which to train the regressor.
+
+        shapes : :map:`PointCloud` list
+            List of the shapes that correspond to the images.
+
+        perturbed_shapes : :map:`PointCloud` list, optional
+            List of the perturbed shapes used for the regressor training.
+
+        verbose : `boolean`, optional
+            Flag that controls information and progress printing.
+
+        Returns
+        -------
+        regressor : :map:`Regressor`
+            A regressor object.
+
+        estimated_delta:
+            estimation of regression object
+
+        Raises
+        ------
+        ValueError
+            The number of shapes must be equal to the number of images.
+        ValueError
+            The number of perturbed shapes must be equal or multiple to
+            the number of images.
+        """
+        n_images = len(images)
+        n_shapes = len(shapes)
+
+        # generate regression data
+        if n_images != n_shapes:
+            raise ValueError("The number of shapes must be equal to "
+                             "the number of images.")
+        elif not perturbed_shapes:
+            perturbed_shapes = self.perturb_shapes(shapes)
+            features, delta_ps = self._regression_data(
+                images, shapes, perturbed_shapes, verbose=verbose)
+        elif n_images == len(perturbed_shapes):
+            features, delta_ps = self._regression_data(
+                images, shapes, perturbed_shapes, verbose=verbose)
+        else:
+            raise ValueError("The number of perturbed shapes must be "
+                             "equal or multiple to the number of images.")
+
+        # compute statistics of features and delta_ps
+        mean_delta_ps = np.mean(delta_ps, axis=0)
+        std_delta_ps = np.std(delta_ps, axis=0)
+        mean_features = np.mean(features, axis=0)
+        std_features = np.std(features, axis=0)
+
+        statistics = {'mean_delta_ps': mean_delta_ps, 'std_delta_ps': std_delta_ps,
+                      'mean_features': mean_features, 'std_features': std_features}
+
+        # perform regression
+        if verbose:
+            print_dynamic('- Performing regression...')
+        # Expected to be a callable
+        regressor = self.regression_type(features, delta_ps, **kwargs)
+
+        # compute regressor RMSE
+        estimated_delta_ps = regressor(features)
+        error = np.sqrt(np.mean(np.sum((delta_ps - estimated_delta_ps) ** 2, axis=1)))
+
+        if verbose:
+            print_dynamic('- Regression RMSE is {0:.5f}.\n'.format(error))
+        return self._build_regressor(regressor, self.features), estimated_delta_ps, statistics, \
+               features, delta_ps
+
+    def compute_feature(self, images, shapes, perturbed_shapes=None, verbose=False, **kwargs):
+        r"""
+        Get the feature of perturb shapes
+
+        Parameters
+        ----------
+        images : list of :map:`MaskedImage`
+            The set of landmarked images from which to train the regressor.
+
+        shapes : :map:`PointCloud` list
+            List of the shapes that correspond to the images.
+
+        perturbed_shapes : :map:`PointCloud` list, optional
+            List of the perturbed shapes used for the regressor training.
+
+        verbose : `boolean`, optional
+            Flag that controls information and progress printing.
+
+        Returns
+        -------
+        features and deltas
+
+        Raises
+        ------
+        ValueError
+            The number of shapes must be equal to the number of images.
+        ValueError
+            The number of perturbed shapes must be equal or multiple to
+            the number of images.
+        """
+        n_images = len(images)
+        n_shapes = len(shapes)
+
+        # generate regression data
+        if n_images != n_shapes:
+            raise ValueError("The number of shapes must be equal to "
+                             "the number of images.")
+        elif not perturbed_shapes:
+            perturbed_shapes = self.perturb_shapes(shapes)
+            features, delta_ps = self._regression_data(
+                images, shapes, perturbed_shapes, verbose=verbose)
+        elif n_images == len(perturbed_shapes):
+            features, delta_ps = self._regression_data(
+                images, shapes, perturbed_shapes, verbose=verbose)
+        else:
+            raise ValueError("The number of perturbed shapes must be "
+                             "equal or multiple to the number of images.")
+
+        return features, delta_ps
+
     def perturb_shapes(self, gt_shape):
         r"""
         Perturbs the given shapes. The number of perturbations is defined by
@@ -212,6 +338,66 @@ class RegressorTrainer(object):
         return noisy_align(self.reference_shape, gt_shape,
                            noise_std=self.noise_std
                            ).apply(self.reference_shape)
+
+    def perturb_shapes_csy(self, gt_shape, reference_shape, noise_std, rotation):
+        r"""
+        Perturbs the given shapes. The number of perturbations is defined by
+        ``n_perturbations``. Allow more customized options
+
+        Parameters
+        ----------
+        gt_shape : :map:`PointCloud` list
+            List of the shapes that correspond to the images.
+            will be perturbed.
+
+        Returns
+        -------
+        perturbed_shapes : :map:`PointCloud` list
+            List of the perturbed shapes.
+        """
+        return [[noisy_align(reference_shape, s, noise_std=noise_std, rotation=rotation).apply(reference_shape)
+                 for _ in range(self.n_perturbations)]
+                for s in gt_shape]
+
+    def perturb_shapes_pdm(self, gt_shape, transform, noise_std):
+        r"""
+        Perturbs the given shapes. The number of perturbations is defined by
+        ``n_perturbations``. Allow more customized options. Allows local deformation by PDM.
+
+        Parameters
+        ----------
+        gt_shape : :map:`PointCloud` list
+            List of the shapes that correspond to the images.
+            will be perturbed.
+
+        Returns
+        -------
+        perturbed_shapes : :map:`PointCloud` list
+            List of the perturbed shapes.
+        """
+        return [[noisy_pdm_align(transform, s, noise_std=noise_std)
+                 for _ in range(self.n_perturbations)]
+                for s in gt_shape]
+
+    def perturb_shapes_direct(self, gt_shape, noise_std):
+        r"""
+        Perturbs the given shapes. The number of perturbations is defined by
+        ``n_perturbations``. Allow more customized options.
+
+        Parameters
+        ----------
+        gt_shape : :map:`PointCloud` list
+            List of the shapes that correspond to the images.
+            will be perturbed.
+
+        Returns
+        -------
+        perturbed_shapes : :map:`PointCloud` list
+            List of the perturbed shapes.
+        """
+        return [[noisy_shape(s, noise_std=noise_std)
+                 for _ in range(self.n_perturbations)]
+                for s in gt_shape]
 
     @abc.abstractmethod
     def _build_regressor(self, regressor, features):
@@ -265,7 +451,9 @@ class NonParametricRegressorTrainer(RegressorTrainer):
 
     def _set_up(self):
         # work out feature length per patch
-        patch_img = Image.blank(self.patch_shape, fill=0)
+        # Shiyang change
+        # patch_img = Image.blank(self.patch_shape, fill=0)
+        patch_img = Image.init_blank(self.patch_shape, fill=0)
         self._feature_patch_length = self.regression_features(patch_img).n_parameters
 
     @property

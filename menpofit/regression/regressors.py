@@ -22,6 +22,44 @@ class mlr(object):
     def __call__(self, x):
         return np.dot(x, self.R)
 
+class rls(object):
+    r"""
+    Multivariate Recursive Least Linear Regression
+
+    Parameters
+    ----------
+
+    """
+    def __init__(self, W, V, multi_step=False):
+        self.multi_step = multi_step
+        self.R = W
+        self.V = V
+
+    def __call__(self, x):
+        return np.dot(x, self.R)
+
+    def update_model(self, X, T):
+        """
+            function to update regression models.
+        """
+        if self.multi_step:
+            n = X.shape[0]
+            a = self.V.dot(X.T)
+            b = np.linalg.solve(np.eye(n) + X.dot(self.V).dot(X.T), X)
+            # update with many examples
+            delta_V = -np.dot(a, b.dot(self.V))
+            self.V += delta_V
+            delta_R = np.dot(self.V.dot(X.T), T) - np.dot(a, b.dot(self.R))
+            self.R += delta_R
+        else:
+            for i, (x, y) in enumerate(zip(X, T)):
+                x = x[None, :]
+                y = y[None, :]
+                delta_V = - np.dot(self.V.dot(x.T), x.dot(self.V)) / (1.0 + x.dot(self.V).dot(x.T))
+                self.V += delta_V
+                term = self.V.dot(x.T)
+                delta_R = np.dot(term, y - x.dot(self.R))
+                self.R += delta_R
 
 class mlr_svd(object):
     r"""

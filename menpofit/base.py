@@ -2,6 +2,7 @@ from __future__ import division
 from menpo.transform import AlignmentSimilarity, Similarity
 import numpy as np
 from menpo.visualize import progress_bar_str, print_dynamic
+from copy import deepcopy
 
 
 def name_of_callable(c):
@@ -127,11 +128,117 @@ def noisy_align(source, target, noise_std=0.04, rotation=False):
     """
     transform = AlignmentSimilarity(source, target, rotation=rotation)
     parameters = transform.as_vector()
-    parameter_range = np.hstack((parameters[:2], target.range()))
+    # Shiyang change
+    if rotation:
+        parameter_range = np.hstack((parameters[0], 2*np.pi, target.range()))
+    else:
+        parameter_range = np.hstack((parameters[:2], target.range()))
     noise = (parameter_range * noise_std *
              np.random.randn(transform.n_parameters))
-    return Similarity.identity(source.n_dims).from_vector(parameters + noise)
+    # # Shiyang change
+    # tmp = Similarity.init_identity(source.n_dims).from_vector(parameters + noise).apply(source)
+    return Similarity.init_identity(source.n_dims).from_vector(parameters + noise)
 
+def noisy_pdm_align(transform, target, noise_std=0.04):
+    r"""
+    Constructs and perturbs the optimal PDM transform between source
+    to the target by adding white noise to its weights.
+    Need to have rotation always.
+
+    Parameters
+    ----------
+    source: :class:`menpo.shape.PointCloud`
+        The source pointcloud instance used in the alignment
+    target: :class:`menpo.shape.PointCloud`
+        The target pointcloud instance used in the alignment
+    noise_std: float
+        The standard deviation of the white noise
+
+        Default: 0.04
+    rotation: boolean
+        If False the second parameter of the Similarity,
+        which captures captures inplane rotations, is set to 0.
+
+        Default:False
+
+    Returns
+    -------
+    noisy_transform : :class: `menpo.transform.Similarity`
+        The noisy Similarity Transform
+    """
+    transform.set_target(target)
+
+    global_weights = transform.global_transform.as_vector()
+    global_params = get_global_params(global_weights)
+
+    local_params = transform.weights
+
+    params = np.hstack((global_params, local_params))
+
+    noise = noise_std * np.random.randn(transform.n_parameters)
+
+    new_params = params + noise
+
+    new_global_params = new_params[:4]
+    new_local_params = new_params[4:]
+
+    a = new_global_params[0]*np.cos(new_global_params[1]) - 1
+    b = new_global_params[0]*np.sin(new_global_params[1])
+    new_global_weights = np.hstack((a, b, new_global_params[2:]))
+
+    # test recover shape
+    transform.from_vector_inplace(np.hstack((np.zeros(4), new_local_params)))
+    deform_mean = transform.target
+    perturb_shape = Similarity.init_identity(deform_mean.n_dims).from_vector(
+        new_global_weights).apply(deform_mean)
+
+    # # check
+    # transform.set_target(perturb_shape)
+    # tmp_global_weights = transform.global_transform.as_vector()
+    # tmp_local_param = transform.weights
+
+    return perturb_shape
+
+def noisy_shape(target, noise_std=0.04):
+    r"""
+    Constructs and perturbs the optimal PDM transform between source
+    to the target by adding white noise to its weights.
+    Need to have rotation always.
+
+    Parameters
+    ----------
+    source: :class:`menpo.shape.PointCloud`
+        The source pointcloud instance used in the alignment
+    target: :class:`menpo.shape.PointCloud`
+        The target pointcloud instance used in the alignment
+    noise_std: float
+        The standard deviation of the white noise
+
+        Default: 0.04
+    rotation: boolean
+        If False the second parameter of the Similarity,
+        which captures captures inplane rotations, is set to 0.
+
+        Default:False
+
+    Returns
+    -------
+    noisy_transform : :class: `menpo.transform.Similarity`
+        The noisy Similarity Transform
+    """
+
+    noise = noise_std * np.random.randn(target.n_parameters)
+
+    perturb_shape = deepcopy(target)
+    perturb_shape.points += np.reshape(noise, perturb_shape.points.shape)
+
+    return perturb_shape
+
+def get_global_params(weights):
+    scale = np.sqrt((weights[0]+1)**2 + weights[1]**2)
+    theta = np.arctan2(weights[1], weights[0]+1)
+    g_params = np.hstack((scale, theta, weights[2:]))
+    return g_params
 
 def build_sampling_grid(patch_shape):
     r"""
